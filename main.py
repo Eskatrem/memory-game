@@ -24,11 +24,13 @@ font_size = 30
 
 class Card(Button):
 
-    def __init__(self, value, **kwargs):
+    def __init__(self, position, value, **kwargs):
+
         super(Card, self).__init__(**kwargs)
         self.back = Image('img/interrogation_mark.jpeg')
         print value
         self.front = Image(value)
+        self.position = position
         self.value = value
         self.rect = Rectangle(pos=(self.x, self.y), texture=self.back.texture, size=(self.width, self.height))
         self.final_size = (0, self.height)
@@ -59,6 +61,59 @@ class Card(Button):
         self.turned_back = (not self.turned_back)
 
 
+def occurences(lst):
+    res = {}
+    for elt in lst:
+        if elt in res.keys():
+            res[elt] += 1
+        else:
+            res[elt] = 1
+    return res
+
+        
+class AI_player:
+
+    def __init__(self, n_cards):
+        self.memory = [-1] * n_cards
+
+    def find_pair(self):
+        occs = occurences([x for x in self.memory if x not in (-1, -2)])
+        print "occs =", occs
+        pairs = [value for value, count in occs.items() if count == 2]
+        if len(pairs) == 0:
+            return None
+        return sorted(pairs)[0]
+        
+    def play(self, board, visible_cards):
+        print "visible_card =", visible_cards
+        if len(visible_cards) > 0:
+            candidates = [k for k, x in enumerate(self.memory) if x == self.memory[visible_cards[0]] and k != visible_cards[0]]
+            if len(candidates) > 0:
+                return choice(candidates)
+            else:
+                unknown_cards = [k for k, x in enumerate(self.memory) if x == -1]
+                return choice(unknown_cards)
+        pair = self.find_pair()
+        if pair is None:
+            possible_choices = [k for k, c in enumerate(self.memory) if c if c == -1]
+            a = choice(possible_choices)
+            return a
+        else:
+            print "found a pair!!"
+
+            return [k for k, x in enumerate(self.memory) if x == pair][0]
+
+    def update(self, position, value):
+        self.memory[position] = value
+        print self.memory
+        return
+
+
+    def update_pair(self, positions):
+        for p in positions:
+            self.memory[p] = -2
+    
+        
 class MemoryLayout(GridLayout):
 
     def __init__(self, **kwargs):
@@ -67,19 +122,23 @@ class MemoryLayout(GridLayout):
         super(MemoryLayout, self).__init__(**kwargs)
         # values = 2 * range((h * l) / 2)
         values = 2 * images
-        # shuffle(values)
+        shuffle(values)
         self.clicks = 0
         self.clicked = []
         self.can_play = True
         self.player = 0
         self.cards = []
         self.scores = [0, 0]
+        self.ai_player = AI_player(2 * len(images))
+        self.visible = []
         
+        position = 0
         # adding the cards on the layout
         for i in range(h):
             for j in range(l):
                 tmp_value = values.pop()
-                tmp_card = Card(tmp_value, 
+                tmp_card = Card(position,
+                                tmp_value, 
                                 x=x_init + (card_width + separation) * i,
                                 y=y_init + (card_height + separation) * j,
                                 width=card_width,
@@ -88,6 +147,7 @@ class MemoryLayout(GridLayout):
                                 on_press=lambda x: self.click(x))
                 self.cards.append(tmp_card)
                 self.add_widget(tmp_card)
+                position += 1
 
         # adding the scores on the layout
         self.add_widget(Label(x=800, y=1200, text="score", width=100, height=100, font_size=40))
@@ -108,7 +168,7 @@ class MemoryLayout(GridLayout):
         self.can_play = True
 
         if self.player == 1:
-            Clock.schedule_once(self.AI_play, delay)
+            Clock.schedule_once(self.AI_play_first, delay)
 
     def remove_cards(self, *args):
         print "inside remove_cards"
@@ -127,12 +187,17 @@ class MemoryLayout(GridLayout):
     
     def click(self, card):
         print self.player
-        if not self.can_play:
+        print "self.clicks =", self.clicks
+        if not self.can_play or not card.turned_back:
             return
 
         self.clicks += 1
         self.clicked.append(card)
+        self.ai_player.update(card.position, card.value)
+        self.visible.append(card.position)
+        
         if self.clicks % 2 == 0:
+            self.visible = []
             if self.clicked[0].value == self.clicked[1].value:
                 self.current_value = self.clicked[0].value
                 print "same cards!"
@@ -141,8 +206,10 @@ class MemoryLayout(GridLayout):
                 self.scores_label[self.player].text = str(self.scores[self.player])
 
                 card.on_click(self.remove_cards)
+                print "len(self.clicked) = ", len(self.clicked)
+                self.ai_player.update_pair(map(lambda c: c.position, [self.clicked[0], self.clicked[1]]))
                 if self.player == 1:
-                    Clock.schedule_once(self.AI_play, delay)
+                    Clock.schedule_once(self.AI_play_first, delay)
                 return
             else:
                 self.player = 1 - self.player                
@@ -153,24 +220,27 @@ class MemoryLayout(GridLayout):
         else:
             card.on_click(None)
 
-    def AI_choice(self):
-        # need to pick randomly two cards in self.cards
-        # a = choice(range(len(self.cards) - 1))
-        # b = choice(range(a + 1, len(self.cards)))
-        a, b = 1, 15
-        choice1 = self.cards[a]
-        choice2 = self.cards[b]
-        print a, b
-        return choice1, choice2
 
-    def AI_play(self, *args):
+    def AI_play_first(self, *args):
+        # variable play_next: boolean
         print "AI is playing now"
         print args
-        c1, c2 = self.AI_choice()
-        self.click(c1)
-        def click_next(*args):
-            self.click(c2)
-        Clock.schedule_once(click_next, delay)
+        position = self.ai_player.play(map(lambda c: c.turned_back, self.cards), self.visible)
+        tmp = [k for k, c in enumerate(self.cards) if c.position == position]
+        if len(tmp) == 0:
+            import pdb; pdb.set_trace()
+        c1 = tmp[0]
+        self.click(self.cards[c1])
+        # TODO here: if play_next, then schedule AI_play, otherwise schedule click_next
+        Clock.schedule_once(self.AI_play_second, delay)
+
+    def AI_play_second(self, *args):
+        print "second time AI is playing"
+        position = self.ai_player.play(map(lambda c: c.turned_back, self.cards), self.visible)
+        c1 = [k for k, c in enumerate(self.cards) if c.position == position][0]
+        self.click(self.cards[c1])
+
+
 
 class MemoryApp(App):
     def build(self):
